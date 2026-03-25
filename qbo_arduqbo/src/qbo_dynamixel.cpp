@@ -1,5 +1,3 @@
-// qbo_dynamixel.cpp
-
 #include "rclcpp/rclcpp.hpp"
 #include "qbo_arduqbo/controllers/dynamixel_controller.hpp"
 
@@ -16,19 +14,16 @@ int main(int argc, char **argv)
 
     try
     {
-
         std::string usb_port = "";
         int baud_rate = -1;
         double protocol_version = -1.0;
 
-        // Récupération des valeurs
         node->get_parameter("dynamixel.usb_port", usb_port);
         node->get_parameter("dynamixel.baud_rate", baud_rate);
         node->get_parameter("dynamixel.protocol_version", protocol_version);
 
-        // Vérifications simples
         if (usb_port.empty()) {
-            RCLCPP_FATAL(node->get_logger(), "❌ USB port is not defined (key: dynamixel.port)");
+            RCLCPP_FATAL(node->get_logger(), "❌ USB port is not defined");
             return 1;
         }
         if (baud_rate <= 0) {
@@ -36,24 +31,42 @@ int main(int argc, char **argv)
             return 1;
         }
         if (protocol_version != 1.0 && protocol_version != 2.0) {
-            RCLCPP_FATAL(node->get_logger(), "❌ Invalid protocol version: %.1f (expected: 1.0 or 2.0)", protocol_version);
+            RCLCPP_FATAL(node->get_logger(), "❌ Invalid protocol version: %.1f", protocol_version);
             return 1;
         }
 
         std::vector<std::string> motor_keys;
         node->get_parameter("dynamixel.motor_keys", motor_keys);
 
-        // ✅ Vérification présence de config
         if (motor_keys.empty()) {
-            RCLCPP_FATAL(node->get_logger(),
-                "❌ No motor is defined. Check the YAML file (key: dynamixel.motor_keys).");
+            RCLCPP_FATAL(node->get_logger(), "❌ No motors defined");
             return 1;
         }
 
-        RCLCPP_INFO(node->get_logger(), "✅ Initial configuration validated, launching controller...");
+        RCLCPP_INFO(node->get_logger(), "✅ Config OK, starting controller...");
         auto controller = std::make_shared<DynamixelController>(node);
-        RCLCPP_INFO(node->get_logger(), "✅ DynamixelController ready.");
-        rclcpp::spin(node);
+
+        RCLCPP_INFO(node->get_logger(), "🔍 Starting READ DEBUG LOOP...");
+
+        // 🔴 LOOP DEBUG (2 Hz)
+        rclcpp::WallRate rate(2);
+
+        while (rclcpp::ok())
+        {
+            int32_t ticks = 0;
+
+            if (controller->getWorkbench().itemRead(1, "Present_Position", &ticks))
+            {
+                RCLCPP_INFO(node->get_logger(), "✅ READ OK: %d", ticks);
+            }
+            else
+            {
+                RCLCPP_ERROR(node->get_logger(), "❌ READ FAIL");
+            }
+
+            rclcpp::spin_some(node);
+            rate.sleep();
+        }
     }
     catch (const std::exception &e)
     {
