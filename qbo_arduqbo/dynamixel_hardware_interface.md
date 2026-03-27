@@ -1,256 +1,228 @@
-# Néo Robot — Documentation Technique Complète
+# Dynamixel Hardware Interface — Néo Robot
 
-> ROS2 Humble — Jetson Orin NX 16Go — JetPack 6.1 — Ubuntu 22.04
-> **Auteurs :** Sylvain Zwolinski, Vincent — **Licence :** BSD-3-Clause
+> Interface ROS2 Humble pour la commande de servomoteurs AX-12A via `DynamixelWorkbench`, intégrée dans le robot **Néo** (Jetson Orin NX 16Go).
 
 ---
 
 ## Table des matières
 
-1. [Vue d'ensemble du système](#1-vue-densemble-du-système)
-2. [Configuration UDEV](#2-configuration-udev)
-3. [Dépendances](#3-dépendances)
-4. [Installation et compilation](#4-installation-et-compilation)
-5. [qbo_dynamixel — Tête Pan/Tilt](#5-qbo_dynamixel--tête-pantilt)
-6. [qbo_arduqbo — Cartes QBoard](#6-qbo_arduqbo--cartes-qboard)
-7. [Commandes de test](#7-commandes-de-test)
-8. [Dépannage](#8-dépannage)
-9. [Améliorations à venir](#9-améliorations-à-venir)
-10. [Historique de version](#10-historique-de-version)
+1. [Vue d'ensemble](#vue-densemble)
+2. [Architecture](#architecture)
+3. [Fonctionnement détaillé](#fonctionnement-détaillé)
+4. [Dépendances](#dépendances)
+5. [Installation](#installation)
+6. [Configuration YAML](#configuration-yaml)
+7. [Commandes de test](#commandes-de-test)
+8. [Topics & Services](#topics--services)
+9. [Avantages de cette implémentation](#avantages)
+10. [Améliorations à venir](#améliorations-à-venir)
+11. [Dépannage](#dépannage)
 
 ---
 
-## 1. Vue d'ensemble du système
+## Vue d'ensemble
 
-Néo est un robot mobile équipé d'une tête Pan/Tilt, d'une base mobile, de capteurs, d'un LCD et d'une gestion batterie. Deux packages ROS2 gèrent le matériel :
+Ce package fournit un nœud ROS2 (`qbo_dynamixel`) qui pilote les servomoteurs Dynamixel AX-12A de la tête de Néo :
 
-| Package | Rôle | Port |
-|---|---|---|
-| `qbo_dynamixel` | Servos AX-12A tête (Pan + Tilt) | `/dev/ttyDmx` |
-| `qbo_arduqbo` | QBoard1 (base/IMU), QBoard2 (nez/bouche/audio) | `/dev/ttyQboard1`, `/dev/ttyQboard2` |
+| Joint | ID | Direction | Neutre | Limites |
+|---|---|---|---|---|
+| `head_pan_joint` | 1 | Pan (gauche/droite) | tick 530 | ±70° (±1.22 rad) |
+| `head_tilt_joint` | 2 | Tilt (haut/bas) | tick 465 | -30° / +20° (-0.52 / +0.35 rad) |
 
-**Architecture générale :**
-
-```
-dynamixel_config.yaml          qboards_config.yaml
-        │                               │
-        ▼                               ▼
-qbo_dynamixel (node)          qbo_arduqbo (node)
-        │                               │
-        ├── DynamixelHardware           ├── BaseController    → /odom, /cmd_vel
-        │   ├── ping retry (×5)         ├── ImuController     → /imu_state
-        │   ├── centrage neutre         ├── BatteryController → /diagnostics
-        │   ├── clamp pos/vitesse       ├── LcdController     → /cmd_lcd
-        │   └── /diagnostics            ├── NoseController    → /cmd_nose
-        │                               ├── MouthController   → /cmd_mouth
-        ├── /cmd_joints sub             └── SensorController  → /distance_sensors
-        └── /torque_enable srv
-```
+**Protocole** : Dynamixel Protocol 1.0 — RS485 @ 1 Mbps via `/dev/ttyDmx` (FT4232H, interface 01 Qboard2)
 
 ---
 
-## 2. Configuration UDEV
+## Architecture
 
-Les règles UDEV créent des liens symboliques stables dans `/dev/` indépendamment de l'ordre de branchement USB.
-
-### Identifier les périphériques
-
-```bash
-lsusb
-udevadm info -a -n /dev/ttyUSB0 | grep -E 'ATTRS{idVendor}|ATTRS{idProduct}|ATTRS{serial}|KERNELS'
-ls -l /dev/serial/by-path/
 ```
-
-### Créer le fichier de règles
-
-```bash
-sudo nano /etc/udev/rules.d/99-usb-serial.rules
-```
-
-```udev
-# ttyQboard1 — FTDI FT232 (VID 0403, PID 6001)
-SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="ttyQboard1", \
-  RUN+="/bin/sh -c 'echo 1 > /sys/bus/usb-serial/devices/%k/latency_timer'"
-
-# ttyQboard2 — interface 00 du FT4232H (VID 0403, PID 6010)
-SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", \
-  ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="ttyQboard2", \
-  RUN+="/bin/sh -c 'echo 1 > /sys/bus/usb-serial/devices/%k/latency_timer'"
-
-# ttyDmx — interface 01 du même FT4232H (Dynamixel RS485)
-SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", \
-  ENV{ID_USB_INTERFACE_NUM}=="01", SYMLINK+="ttyDmx", \
-  RUN+="/bin/sh -c 'echo 1 > /sys/bus/usb-serial/devices/%k/latency_timer'"
-
-# ttyRpLidar — Silicon Labs CP210x
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="ttyRpLidar"
-```
-
-### Appliquer et vérifier
-
-```bash
-sudo udevadm control --reload-rules && sudo udevadm trigger
-ls -la /dev/ttyDmx /dev/ttyQboard1 /dev/ttyQboard2
-```
-
-### Si ttyDmx pose problème — service systemd alternatif
-
-```bash
-sudo nano /etc/systemd/system/ttyDmx.service
-```
-
-```ini
-[Unit]
-Description=Créer le lien /dev/ttyDmx pour le port FTDI interface 01
-After=dev-ttyUSB2.device
-Wants=dev-ttyUSB2.device
-
-[Service]
-Type=oneshot
-ExecStart=/bin/ln -sf /dev/ttyUSB2 /dev/ttyDmx
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable ttyDmx.service
-sudo systemctl start ttyDmx.service
-```
-
-### Permissions série
-
-```bash
-sudo usermod -aG dialout $USER
-newgrp dialout   # sans reloguer
+dynamixel_config.yaml
+        │
+        ▼
+qbo_dynamixel (main)
+        │
+        ├── DynamixelHardware (on_init)
+        │       ├── ping ID1 → AX-12A modèle 12
+        │       ├── ping ID2 → AX-12A modèle 12
+        │       ├── Torque_Limit + torqueOn
+        │       ├── Goal_Position → neutral (centrage)
+        │       └── diagnostic_updater → /diagnostics
+        │
+        ├── Subscriber /cmd_joints (JointState)
+        │       ├── Moving_Speed (clampé à max_speed yaml)
+        │       └── Goal_Position (clampé à min/max_angle yaml)
+        │
+        ├── Service /head_pan_joint/torque_enable
+        ├── Service /head_tilt_joint/torque_enable
+        │
+        └── Read loop @ 1 Hz (via config.yaml)
+                ├── Present_Position → position (rad)
+                ├── Present_Speed    → velocity (rad/s)
+                ├── Present_Load     → torque_load
+                ├── Present_Temperature → temperature (°C)
+                └── Torque_Enable    → torque_enabled (bool)
 ```
 
 ---
 
-## 3. Dépendances
+## Fonctionnement détaillé
 
-### Packages ROS2
+### Initialisation (`on_init`)
+
+1. Lecture des paramètres depuis le yaml (port, baud, protocol, joints...)
+2. Initialisation de `DynamixelWorkbench` sur `/dev/ttyDmx` @ 1 Mbps
+3. **Ping avec retry** (5 tentatives × 100ms) pour chaque servo — nécessaire car `DynamixelWorkbench` doit charger la table de registres du modèle avant tout `itemRead/itemWrite`
+4. Configuration : `Torque_Limit`, `torqueOn`, `Goal_Position = neutral`
+5. Enregistrement des callbacks dans `diagnostic_updater`
+
+### Lecture (`read`)
+
+Appelée à 1 Hz dans la boucle principale. Lit 5 registres par servo :
+
+```
+Present_Position  → ticks → rad (via ticksToAngle)
+Present_Speed     → ticks → rad/s (× 0.01194)
+Present_Load      → torque_load brut
+Present_Temperature → °C
+Torque_Enable     → bool
+```
+
+Si la lecture échoue (torque OFF, overload), la dernière valeur connue est conservée sans planter le nœud (`WARN_THROTTLE` + `continue`).
+
+### Écriture de position
+
+Le topic `/cmd_joints` accepte un `JointState` avec :
+- `name[]` : noms des joints à commander
+- `position[]` : consigne en **radians**
+- `velocity[]` : vitesse souhaitée en **rad/s** (optionnel)
+
+Pipeline de traitement :
+```
+position (rad)
+    └── angleToTicks()
+            ├── clamp([min_angle, max_angle])  ← sécurité mécanique
+            ├── invert si nécessaire
+            └── tick = round(rad / rad_per_tick) + neutral
+
+velocity (rad/s)
+    └── min(velocity, max_speed)               ← clamp yaml
+            └── speed_tick = vel × 85.9        ← AX-12: 0.111 RPM/tick
+                    └── clamp([1, 1023])
+                            └── Moving_Speed
+```
+
+### Conversions AX-12A
+
+| Grandeur | Formule |
+|---|---|
+| rad → ticks | `tick = round(rad / (π / 512)) + neutral` |
+| ticks → rad | `rad = (tick - neutral) × (π / 512)` |
+| rad/s → ticks vitesse | `tick = rad/s × 85.9` (car 0.111 RPM/tick) |
+| Vitesse max (11.1V) | ≈ 5.7 rad/s (54.6 RPM) |
+
+### Diagnostics
+
+Publié sur `/diagnostics` via `diagnostic_updater` à chaque `read()` :
+
+| Champ | Valeur |
+|---|---|
+| Position (rad) | position courante |
+| Velocity (rad/s) | vitesse courante |
+| Torque load | charge moteur brute |
+| Temperature (C) | température interne |
+| Torque enabled | true / false |
+| Status | OK / WARN (≥60°C) / ERROR (≥70°C) |
+
+---
+
+## Dépendances
+
+### Packages ROS2 à installer
 
 ```bash
 sudo apt install \
   ros-humble-dynamixel-workbench-toolbox \
-  ros-humble-dynamixel-workbench \
   ros-humble-diagnostic-updater \
   ros-humble-hardware-interface \
-  ros-humble-sensor-msgs \
-  ros-humble-tf2-geometry-msgs
+  ros-humble-sensor-msgs
 ```
 
-### Python
+### Package Python (pour le scan de diagnostic)
 
 ```bash
 pip3 install dynamixel-sdk --break-system-packages
-sudo apt install python3-serial
+```
+
+### Règle udev requise
+
+Le port `/dev/ttyDmx` est créé par une règle udev pointant vers l'interface 01 du FT4232H (VID `0403`, PID `6010`) :
+
+```
+# /etc/udev/rules.d/99-usb-serial.rules
+SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", \
+  ENV{ID_USB_INTERFACE_NUM}=="01", SYMLINK+="ttyDmx"
+```
+
+Recharger après modification :
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 ---
 
-## 4. Installation et compilation
+## Installation
+
+### 1. Cloner et builder
 
 ```bash
 cd ~/qbo_ws
-
-# Build complet
 colcon build --packages-select qbo_msgs qbo_arduqbo
-source install/setup.bash
-
-# Build propre si erreurs de cache
-rm -rf build/qbo_arduqbo install/qbo_arduqbo
-colcon build --packages-select qbo_arduqbo --cmake-clean-cache --allow-overriding qbo_arduqbo
 source install/setup.bash
 ```
 
-### Vérifier les servos avant de lancer
+### 2. Vérifier que les servos sont détectables
 
 ```bash
 python3 - << 'EOF'
 from dynamixel_sdk import *
-PORT = "/dev/ttyDmx"
-for baud in [57600, 1000000, 115200]:
-    ph = PortHandler(PORT)
-    pm = PacketHandler(1.0)
-    ph.setBaudRate(baud)
-    ph.openPort()
-    found = []
-    for id in range(1, 20):
-        model, result, _ = pm.ping(ph, id)
-        if result == 0:
-            found.append((id, model))
-    ph.closePort()
-    if found:
-        print(f"✅ Baud {baud}: {found}")
-    else:
-        print(f"❌ Baud {baud}: rien")
+ph = PortHandler("/dev/ttyDmx")
+pm = PacketHandler(1.0)
+ph.setBaudRate(1000000)
+ph.openPort()
+for id in range(1, 10):
+    model, result, _ = pm.ping(ph, id)
+    if result == 0:
+        print(f"✅ ID {id} trouvé, modèle {model}")
+ph.closePort()
 EOF
 ```
 
-Résultat attendu : `✅ Baud 1000000: [(1, 12), (2, 12)]`
+Résultat attendu :
+```
+✅ ID 1 trouvé, modèle 12
+✅ ID 2 trouvé, modèle 12
+```
+
+### 3. Lancer le nœud
+
+```bash
+# Via le binaire direct (recommandé pour debug)
+~/qbo_ws/install/qbo_arduqbo/lib/qbo_arduqbo/qbo_dynamixel \
+  --ros-args --params-file /home/nvidia/qbo_ws/src/qbo_arduqbo/config/dynamixel_config.yaml
+
+# Via ros2 run
+ros2 run qbo_arduqbo qbo_dynamixel \
+  --ros-args --params-file /home/nvidia/qbo_ws/src/qbo_arduqbo/config/dynamixel_config.yaml
+
+# Via launch (avec les autres nœuds Néo)
+ros2 launch qbo_arduqbo qbo_arduqbo.launch.py
+```
 
 ---
 
-## 5. qbo_dynamixel — Tête Pan/Tilt
+## Configuration YAML
 
-### Servos configurés
-
-| Joint | ID | Neutre | Limites | Max vitesse |
-|---|---|---|---|---|
-| `head_pan_joint` | 1 | tick 530 | ±70° (±1.22 rad) | 5.0 rad/s |
-| `head_tilt_joint` | 2 | tick 465 | -30°/+20° (-0.52/+0.35 rad) | 3.0 rad/s |
-
-**Protocole :** Dynamixel 1.0 — RS485 @ 1 Mbps — `/dev/ttyDmx`
-
-### Fonctionnement
-
-**Initialisation (`on_init`) :**
-1. Lecture de tous les paramètres depuis le yaml
-2. Init `DynamixelWorkbench` sur le port RS485
-3. Ping avec retry (5 tentatives × 100ms) — nécessaire pour charger la table de registres du modèle
-4. Configuration : `Torque_Limit`, `torqueOn`, `Goal_Position = neutral` (centrage auto)
-5. Init `diagnostic_updater` → `/diagnostics`
-
-**Lecture (`read`) :**
-
-Fréquence configurable via `dynamixel_state_rate_hz` dans le yaml. Pour chaque servo :
-```
-itemRead Present_Position    → ticks → rad
-itemRead Present_Speed       → bit10=direction, bits0-9=magnitude → rad/s
-itemRead Present_Load        → bit10=direction, bits0-9=magnitude
-itemRead Present_Temperature → °C
-itemRead Torque_Enable       → bool
-```
-Si lecture échoue : dernière valeur conservée, `WARN_THROTTLE` 2s, pas de crash.
-
-**Écriture de position (`/cmd_joints`) :**
-```
-position (rad) → clamp([min_angle, max_angle]) → ticks → Goal_Position
-velocity (rad/s) → min(vel, max_speed) → × 85.9 → clamp([1,1023]) → Moving_Speed
-```
-
-**Conversions AX-12A :**
-
-| Grandeur | Formule |
-|---|---|
-| rad → ticks | `round(rad / (π/512)) + neutral` |
-| ticks → rad | `(ticks - neutral) × (π/512)` |
-| rad/s → ticks vitesse | `rad/s × 85.9` (0.111 RPM/tick) |
-| Vitesse max @ 11.1V | ≈ 5.7 rad/s (54.6 RPM) |
-
-**Diagnostics sur `/diagnostics` :**
-
-| Champ | Seuil |
-|---|---|
-| Position (rad), Velocity, Torque load | — |
-| Temperature (C) | WARN ≥ 60°C / ERROR ≥ 70°C |
-| Torque enabled | true/false |
-
-### Configuration YAML
+Fichier : `config/dynamixel_config.yaml`
 
 ```yaml
 dynamixel_hardware:
@@ -258,310 +230,261 @@ dynamixel_hardware:
     dynamixel.usb_port: "/dev/ttyDmx"
     dynamixel.baud_rate: 1000000
     dynamixel.protocol_version: 1.0
-    dynamixel_state_rate_hz: 1.0        # ⚠️ float obligatoire (1.0 pas 1)
-    dynamixel_joint_rate_hz: 15.0
-
-    diagnostic_temp_warn: 65.0
-    diagnostic_voltage_min: 8.0
-    diagnostic_voltage_max: 12.5
-    auto_torque_off: true
-    auto_torque_off_timeout: 20.0
-
     dynamixel.motor_keys: ["motor_1", "motor_2"]
 
+    # Servo 1 : Pan (gauche/droite)
     dynamixel.motors.motor_1.name: head_pan_joint
     dynamixel.motors.motor_1.id: 1
-    dynamixel.motors.motor_1.neutral: 530
+    dynamixel.motors.motor_1.neutral: 530          # tick position centrale
     dynamixel.motors.motor_1.ticks: 1024
-    dynamixel.motors.motor_1.torque_limit: 800
-    dynamixel.motors.motor_1.max_speed: 5.0
+    dynamixel.motors.motor_1.torque_limit: 800     # /1023
+    dynamixel.motors.motor_1.max_speed: 3.0        # rad/s max
     dynamixel.motors.motor_1.min_angle_degrees: -70.0
     dynamixel.motors.motor_1.max_angle_degrees: 70.0
     dynamixel.motors.motor_1.invert: false
 
+    # Servo 2 : Tilt (haut/bas)
     dynamixel.motors.motor_2.name: head_tilt_joint
     dynamixel.motors.motor_2.id: 2
     dynamixel.motors.motor_2.neutral: 465
     dynamixel.motors.motor_2.ticks: 1024
     dynamixel.motors.motor_2.torque_limit: 800
-    dynamixel.motors.motor_2.max_speed: 3.0
+    dynamixel.motors.motor_2.max_speed: 2.0        # rad/s max (tilt plus délicat)
     dynamixel.motors.motor_2.min_angle_degrees: -30.0
     dynamixel.motors.motor_2.max_angle_degrees: 20.0
     dynamixel.motors.motor_2.invert: false
 ```
 
-### Topics & Services
-
-| Topic/Service | Type | Description |
-|---|---|---|
-| `/cmd_joints` sub | `sensor_msgs/JointState` | Commandes position + vitesse |
-| `/diagnostics` pub | `diagnostic_msgs/DiagnosticArray` | Température, charge, position, torque |
-| `/head_pan_joint/torque_enable` | `qbo_msgs/srv/TorqueEnable` | Torque ON/OFF servo pan |
-| `/head_tilt_joint/torque_enable` | `qbo_msgs/srv/TorqueEnable` | Torque ON/OFF servo tilt |
-
-### Lancement
-
-```bash
-# Debug direct (recommandé)
-~/qbo_ws/install/qbo_arduqbo/lib/qbo_arduqbo/qbo_dynamixel \
-  --ros-args --params-file ~/qbo_ws/src/qbo_arduqbo/config/dynamixel_config.yaml
-
-# Via ros2 run
-ros2 run qbo_arduqbo qbo_dynamixel \
-  --ros-args --params-file ~/qbo_ws/src/qbo_arduqbo/config/dynamixel_config.yaml
-
-# Via launch complet Néo
-ros2 launch qbo_arduqbo qbo_full.launch.py
-```
+> **Paramètres clés :**
+> - `neutral` : position tick au centre mécanique — à calibrer physiquement
+> - `torque_limit` : limite le couple (protection mécanique) — 800/1023 ≈ 78%
+> - `max_speed` : vitesse max acceptée par le software — indépendante du yaml `max_speed` AX-12
+> - `min/max_angle_degrees` : limites de sécurité — toute commande hors plage est clampée
 
 ---
 
-## 6. qbo_arduqbo — Cartes QBoard
+## Commandes de test
 
-### Lancement
-
-```bash
-ros2 run qbo_arduqbo qbo_arduqbo \
-  --ros-args --params-file ~/qbo_ws/src/qbo_arduqbo/config/qboards_config.yaml
-```
-
-### Configuration YAML (extrait)
-
-```yaml
-qbo_arduqbo:
-  ros__parameters:
-    enable_qboard1: true
-    port1: "/dev/ttyQboard1"
-    baud1: 500000              # ×4.3 vs 115200 — réduit latence transmission
-    timeout1: 10.0             # nécessaire pour calibration IMU
-
-    enable_qboard2: true
-    port2: "/dev/ttyQboard2"
-    baud2: 115200
-    timeout2: 3.0
-
-    enable_base: true
-    enable_battery: true
-    enable_imu_base: true
-    enable_lcd: true
-    enable_nose: true
-    enable_mouth: true
-    enable_audio: false
-    enable_sensors: true
-```
-
-### Contrôleurs
-
-**BaseController** — base mobile, odométrie, TF
-
-| Topic/Service | Description |
-|---|---|
-| `/qbo_arduqbo/base_ctrl/cmd_vel` sub | Commande vitesse Twist |
-| `/qbo_arduqbo/base_ctrl/odom` pub | Odométrie |
-| `stop_base` srv | Arrêt d'urgence |
-| `set_odometry` srv | Reset position |
-| `unlock_motors_stall` srv | Déblocage moteurs |
-
-**ImuController** — IMU, calibration
-
-| Topic/Service | Description |
-|---|---|
-| `/qbo_arduqbo/imu_ctrl/imu_state/data` pub | Données IMU |
-| `/qbo_arduqbo/imu_ctrl/imu_state/calibrate` srv | Calibration |
-
-**BatteryController** — tension, autonomie (→ `/diagnostics` uniquement)
-
-**LcdController** — `/qbo_arduqbo/lcd_ctrl/cmd_lcd` (`qbo_msgs/msg/LCD`)
-
-**NoseController** — `/qbo_arduqbo/nose_ctrl/cmd_nose` (`qbo_msgs/msg/Nose`) + service `test_leds`
-
-**MouthController** — `/qbo_arduqbo/mouth_ctrl/cmd_mouth` (`qbo_msgs/msg/Mouth`) + service `test_leds`
-
-**SensorController** — capteurs distance SRF10/Sharp IR → `/qbo_arduqbo/sens_ctrl/distance_sensors_state/<name>`
-
----
-
-## 7. Commandes de test
-
-### Tête Dynamixel
+### Centrer la tête
 
 ```bash
-# Centrer
 ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
   "{name: ['head_pan_joint', 'head_tilt_joint'], position: [0.0, 0.0], velocity: [1.0, 1.0]}"
+```
 
-# Pan droite lent
+### Pan gauche/droite
+
+```bash
+# Pan à droite (+0.5 rad ≈ 28°)
 ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
-  "{name: ['head_pan_joint'], position: [0.5], velocity: [0.5]}"
+  "{name: ['head_pan_joint'], position: [0.5], velocity: [1.0]}"
 
-# Pan gauche max (-70°) rapide
+# Pan à gauche (-0.5 rad)
 ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
-  "{name: ['head_pan_joint'], position: [-1.22], velocity: [5.0]}"
+  "{name: ['head_pan_joint'], position: [-0.5], velocity: [1.0]}"
 
-# Tilt haut (+20° max)
+# Pan max droite (70° = 1.22 rad)
 ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
-  "{name: ['head_tilt_joint'], position: [0.35], velocity: [1.0]}"
+  "{name: ['head_pan_joint'], position: [1.22], velocity: [2.0]}"
+```
 
-# Tilt bas (-30° max)
+### Tilt haut/bas
+
+```bash
+# Tilt haut (+0.3 rad ≈ 17°)
 ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
-  "{name: ['head_tilt_joint'], position: [-0.52], velocity: [1.0]}"
+  "{name: ['head_tilt_joint'], position: [0.3], velocity: [0.5]}"
 
-# Mouvement combiné
+# Tilt bas (-0.4 rad ≈ -23°)
 ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
-  "{name: ['head_pan_joint', 'head_tilt_joint'], position: [0.8, -0.3], velocity: [2.0, 1.0]}"
+  "{name: ['head_tilt_joint'], position: [-0.4], velocity: [0.5]}"
+```
 
-# Torque OFF / ON
+### Mouvement combiné
+
+```bash
+ros2 topic pub -1 /cmd_joints sensor_msgs/msg/JointState \
+  "{name: ['head_pan_joint', 'head_tilt_joint'], position: [0.5, -0.3], velocity: [2.0, 1.0]}"
+```
+
+### Contrôle du torque
+
+```bash
+# Désactiver le torque (mode passif — tête libre à la main)
 ros2 service call /head_pan_joint/torque_enable qbo_msgs/srv/TorqueEnable "{torque_enable: false}"
-ros2 service call /head_pan_joint/torque_enable qbo_msgs/srv/TorqueEnable "{torque_enable: true}"
 ros2 service call /head_tilt_joint/torque_enable qbo_msgs/srv/TorqueEnable "{torque_enable: false}"
+
+# Réactiver le torque
+ros2 service call /head_pan_joint/torque_enable qbo_msgs/srv/TorqueEnable "{torque_enable: true}"
 ros2 service call /head_tilt_joint/torque_enable qbo_msgs/srv/TorqueEnable "{torque_enable: true}"
 ```
 
-### Base mobile
+### Lire l'état des joints
 
 ```bash
-ros2 topic pub /qbo_arduqbo/base_ctrl/cmd_vel geometry_msgs/msg/Twist \
-  '{linear: {x: 0.2}, angular: {z: 0.0}}'
-ros2 service call /qbo_arduqbo/base_ctrl/stop_base std_srvs/srv/Empty "{}"
-ros2 service call /qbo_arduqbo/base_ctrl/set_odometry qbo_msgs/srv/SetOdometry \
-  "{x: 0.0, y: 0.0, theta: 0.0}"
+ros2 topic echo /cmd_joints
 ```
 
-### Expressivité
-
-```bash
-# Nez rouge
-ros2 topic pub -1 /qbo_arduqbo/nose_ctrl/cmd_nose qbo_msgs/msg/Nose "{color: 4}"
-
-# LCD
-ros2 topic pub -1 /qbo_arduqbo/lcd_ctrl/cmd_lcd qbo_msgs/msg/LCD "{msg: 'Hello Neo'}"
-
-# Bouche
-ros2 topic pub -1 /qbo_arduqbo/mouth_ctrl/cmd_mouth qbo_msgs/msg/Mouth \
-  "{mouth_image: [true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true]}"
-```
-
-### Surveillance
+### Lire les diagnostics
 
 ```bash
 ros2 topic echo /diagnostics
-ros2 topic echo /joint_states
-ros2 topic echo /qbo_arduqbo/base_ctrl/odom
-ros2 topic echo /qbo_arduqbo/imu_ctrl/imu_state/data
+# ou avec rqt
 ros2 run rqt_runtime_monitor rqt_runtime_monitor
 ```
 
-### Système
+### Vérifier les ports série
 
 ```bash
-# Ports disponibles
-ls -la /dev/ttyDmx /dev/ttyQboard1 /dev/ttyQboard2
-
-# Processus occupant les ports
-fuser /dev/ttyDmx /dev/ttyQboard1 /dev/ttyQboard2
-
-# Tuer un processus bloquant
-kill $(pgrep -f qbo_dynamixel)
-pkill -f qbo_arduqbo
-
-# Baud rate effectif
-stty -F /dev/ttyQboard1
-stty -F /dev/ttyDmx
+ls -la /dev/ttyDmx /dev/ttyQboard*
+fuser /dev/ttyDmx   # vérifier qu'aucun autre processus n'occupe le port
 ```
 
 ---
 
-## 8. Dépannage
+## Topics & Services
+
+### Topics
+
+| Topic | Type | Direction | Description |
+|---|---|---|---|
+| `/cmd_joints` | `sensor_msgs/JointState` | Entrée | Commandes position + vitesse |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | Sortie | Température, charge, position, torque |
+
+### Services
+
+| Service | Type | Description |
+|---|---|---|
+| `/head_pan_joint/torque_enable` | `qbo_msgs/srv/TorqueEnable` | Active/désactive le torque du servo pan |
+| `/head_tilt_joint/torque_enable` | `qbo_msgs/srv/TorqueEnable` | Active/désactive le torque du servo tilt |
+
+### Format du message `/cmd_joints`
+
+```
+name:     ['head_pan_joint', 'head_tilt_joint']   # noms des joints à commander
+position: [0.0, 0.0]                               # rad — clampé aux limites yaml
+velocity: [1.0, 0.5]                               # rad/s — clampé à max_speed yaml
+                                                   # velocity: [] pour conserver la vitesse actuelle
+```
+
+---
+
+## Avantages
+
+### Robustesse
+- **Ping avec retry** au démarrage — résout les collisions de bus RS485 entre servos en daisy-chain
+- **Lecture tolérante** — un servo qui ne répond pas (torque OFF, overload) ne plante plus le nœud
+- **Clamp de position** — toute commande hors `[min_angle, max_angle]` est automatiquement limitée, empêchant les overload errors et les dommages mécaniques
+- **Protection overload** — `Torque_Limit` configurable par servo dans le yaml
+
+### Flexibilité
+- **100% piloté par le yaml** — port, IDs, neutres, limites, vitesses max : aucune valeur hardcodée dans le code
+- **Servos dynamiques** — ajouter un 3ème servo ne nécessite qu'une entrée yaml, pas de modification C++
+- **Services torque** par servo — permet le mode passif (tête déplaçable à la main) servo par servo
+
+### Observabilité
+- **Diagnostics ROS2** complets sur `/diagnostics` : position, vitesse, température, charge, état torque
+- **Alertes température** : WARN à 60°C, ERROR à 70°C
+- **Logs détaillés** : chaque commande loggue la vitesse demandée, clampée, et le tick résultant
+
+### Performance (Jetson Orin NX)
+- Latency timer à 1ms sur le port USB-série (règle udev `latency_timer`)
+- `WARN_THROTTLE` à 2s pour éviter le flood de logs en cas d'erreur répétée
+- Lecture de 5 registres par servo par cycle (position, vitesse, charge, température, torque)
+
+---
+
+## Améliorations à venir
+
+### Court terme
+
+- **Sync Read** — lire les 5 registres des 2 servos en un seul paquet RS485 au lieu de 10 lectures individuelles, divisant par ~5 le temps de lecture
+- **Auto torque-off** — éteindre le torque après N secondes d'inactivité (`auto_torque_off_timeout` déjà dans le yaml)
+
+### Moyen terme
+
+- **Action server `/move_head`** — interface de haut niveau avec feedback de progression, utilisable depuis le comportement de Néo
+- **Profil de mouvement trapézoïdal** — accélération/décélération progressive pour des mouvements plus naturels
+- **Intégration ros2_control** — exposer le hardware interface via le vrai `controller_manager` pour utiliser les controllers standard (joint_trajectory_controller, etc.)
+- **Publisher `/joint_states`** — publier l'état des joints sur le topic standard pour la visualisation URDF dans RViz
+
+### Long terme
+
+- **Comportements de tête** — nœud de haut niveau : suivi de visage, regard aléatoire, nod/shake expressif
+- **Détection d'obstacle mécanique** — utiliser `Present_Load` pour détecter un blocage et stopper le mouvement
+- **Calibration automatique** — procédure de recherche automatique des positions neutres au démarrage
+
+---
+
+## Dépannage
 
 ### `Cannot ping servo ID X après 5 tentatives`
 
 ```bash
-# Vérifier le port
+# Vérifier que le port existe
 ls -la /dev/ttyDmx
 
-# Scanner tous les IDs et baud rates
-python3 - << 'EOF'
+# Scanner les IDs et baud rates disponibles
+python3 -c "
 from dynamixel_sdk import *
-for baud in [57600, 1000000, 115200]:
-    ph = PortHandler("/dev/ttyDmx")
-    pm = PacketHandler(1.0)
-    ph.setBaudRate(baud)
-    ph.openPort()
-    found = [(id, m) for id in range(1,20) for m, r, _ in [pm.ping(ph, id)] if r == 0]
-    ph.closePort()
-    print(f"{'✅' if found else '❌'} Baud {baud}: {found if found else 'rien'}")
-EOF
+ph = PortHandler('/dev/ttyDmx')
+pm = PacketHandler(1.0)
+ph.setBaudRate(1000000)
+ph.openPort()
+for id in range(1, 10):
+    model, result, _ = pm.ping(ph, id)
+    if result == 0:
+        print(f'ID {id} OK modele {model}')
+ph.closePort()
+"
 
-# Permissions
-groups && sudo usermod -aG dialout nvidia
+# Vérifier les permissions
+groups  # doit contenir dialout
+sudo usermod -aG dialout nvidia  # si absent, puis reloguer
 ```
 
-### `Overload error` — servo en protection
+### `Overload error` sur un servo
+
+Le servo a été forcé hors de ses limites mécaniques. Il passe en protection et ne répond plus.
 
 ```bash
-# Couper l'alimentation 5 secondes puis rebrancher
-# Vérifier les limites yaml (min/max_angle_degrees)
-# Réduire torque_limit (ex: 400 au lieu de 800)
+# Couper l'alimentation 5 secondes, rebrancher
+# Puis vérifier que les limites yaml sont correctes :
+# min_angle_degrees / max_angle_degrees correspondent à la plage mécanique réelle
 ```
 
-### `No Q.bo board detected on any port`
+### Port occupé par un ancien processus
 
 ```bash
-# Port occupé ?
-fuser /dev/ttyQboard1
-sudo kill -9 $(fuser /dev/ttyQboard1 2>/dev/null)
-
-# La carte envoie-t-elle des données ?
-timeout 3 cat /dev/ttyQboard1 | xxd | head -5
-
-# Symlinks absents ?
-sudo udevadm control --reload-rules && sudo udevadm trigger
-ls -la /dev/ttyQboard*
+fuser /dev/ttyDmx
+sudo kill -9 $(fuser /dev/ttyDmx 2>/dev/null)
+# ou
+pkill -f qbo_dynamixel
 ```
 
-### Segfault au redémarrage rapide
+### Température servo 2 élevée (>50°C)
 
-Bus RS485 pas vidé. Attendre 2-3 secondes.
+Normal en fonctionnement continu. L'AX-12A supporte jusqu'à 70°C.
 
-```bash
-fuser /dev/ttyDmx   # vérifier qu'aucun processus ne tient le port
-```
+- Réduire `torque_limit` dans le yaml (ex: 400 au lieu de 800)
+- Réduire `max_speed`
+- Activer `auto_torque_off` quand le robot est inactif
 
-### Température servo élevée (>50°C)
+### Segmentation fault au redémarrage rapide
 
-Normal en continu. AX-12A supporte jusqu'à 70°C.
-- Réduire `torque_limit: 400`
-- Réduire `max_speed: 2.0`
-- Activer `auto_torque_off: true`
+Le bus RS485 n'a pas eu le temps de se vider. Attendre 2-3 secondes entre deux lancements.
 
----
+---------------------------------------------------------------------
 
-## 9. Améliorations à venir
-
-**Court terme**
-- `auto_torque_off` — éteindre le torque après timeout d'inactivité (paramètre yaml existant, à implémenter)
-- Publisher `/joint_states` standard pour RViz/URDF
-
-**Moyen terme**
-- Action server `/move_head` — feedback progression, utilisable depuis les behaviours de Néo
-- Profil de mouvement trapézoïdal — accélération/décélération progressive
-- Intégration `ros2_control` complète via `controller_manager`
-
-**Long terme**
-- Comportements de tête : suivi de visage, regard aléatoire, nod/shake expressif
-- Détection de blocage mécanique via `Present_Load`
-- Calibration automatique des neutres au démarrage
----
-
-## 10. Historique de version
+## Notes de version
 
 | Version | Date | Changements |
 |---|---|---|
 | 1.0 | Mars 2026 | Init — lecture position, écriture Goal_Position |
-| 1.1 | Mars 2026 | Ping avec retry, séparation ping/config |
+| 1.1 | Mars 2026 | Ping avec retry, séparation ping/config         |
 | 1.2 | Mars 2026 | Lecture température/vitesse/torque, diagnostics |
-| 1.3 | Mars 2026 | Services torque_enable, lecture tolérante |
-| 1.4 | Mars 2026 | Centrage au démarrage, clamp min/max_angle |
-| 1.5 | Mars 2026 | Contrôle vitesse Moving_Speed, clamp max_speed |
-| 1.6 | Mars 2026 | Config 100% yaml, suppression valeurs hardcodées |
-| 1.7 | Mars 2026 | Fusion doc : dynamixel + arduqbo + udev en 1 fichier |
+| 1.3 | Mars 2026 | Services torque_enable, lecture tolérante       |
+| 1.4 | Mars 2026 | Centrage au démarrage, clamp min/max_angle      |
+| 1.5 | Mars 2026 | Contrôle vitesse Moving_Speed, clamp max_speed  |
+| 1.6 | Mars 2026 | Config 100% yaml, suppression valeurs hardcodées|
+| 1.7 | Mars 2026 | Relax moteurs, selon valeur yaml                |

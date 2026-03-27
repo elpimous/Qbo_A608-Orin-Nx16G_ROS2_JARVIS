@@ -20,11 +20,20 @@ int main(int argc, char **argv)
     node->declare_parameter("dynamixel.baud_rate",        1000000);
     node->declare_parameter("dynamixel.protocol_version", 1.0);
     node->declare_parameter("dynamixel.motor_keys",       std::vector<std::string>{});
+    node->declare_parameter("auto_torque_off",         false);
+    node->declare_parameter("auto_torque_off_timeout",  20.0);
 
     std::string port     = node->get_parameter("dynamixel.usb_port").as_string();
     int         baud     = node->get_parameter("dynamixel.baud_rate").as_int();
     double      protocol = node->get_parameter("dynamixel.protocol_version").as_double();
     auto        keys     = node->get_parameter("dynamixel.motor_keys").as_string_array();
+
+    bool   auto_torque_off     = node->get_parameter("auto_torque_off").as_bool();
+    double torque_off_timeout  = node->get_parameter("auto_torque_off_timeout").as_double();
+    auto   last_cmd_time       = node->get_clock()->now();  // ✅ timestamp dernière commande
+
+    RCLCPP_INFO(node->get_logger(), "Auto torque off: %s (timeout=%.0fs)",
+        auto_torque_off ? "ON" : "OFF", torque_off_timeout);
 
     auto hardware = std::make_shared<DynamixelHardware>();
 
@@ -77,7 +86,7 @@ int main(int argc, char **argv)
     // ✅ Subscriber /cmd_joints avec clamp position + vitesse
     auto cmd_sub = node->create_subscription<sensor_msgs::msg::JointState>(
         "/cmd_joints", 10,
-        [&hardware, &node](const sensor_msgs::msg::JointState::SharedPtr msg)
+        [&hardware, &node, &last_cmd_time](const sensor_msgs::msg::JointState::SharedPtr msg)
         {
             auto & wb            = hardware->getWorkbench();
             const auto & servos  = hardware->getServos();
@@ -85,6 +94,18 @@ int main(int argc, char **argv)
             int32_t goals[10];
             uint8_t ids[10];
             uint8_t count = 0;
+
+            // ✅ Mise à jour du timestamp à chaque commande reçue
+            last_cmd_time = node->get_clock()->now();
+
+            // Réactive le torque si il avait été éteint par timeout
+            for (auto & s : hardware->getServos()) {
+                if (!s.torque_enabled) {
+                    hardware->getWorkbench().torqueOn(s.id);
+                    s.torque_enabled = true;
+                    RCLCPP_INFO(node->get_logger(), "Auto torque ON (commande reçue) : %s", s.name.c_str());
+                }
+            }
 
             for (size_t i = 0; i < msg->name.size(); i++) {
                 for (const auto & s : servos) {
@@ -172,6 +193,22 @@ int main(int argc, char **argv)
         if (hardware->read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0)) ==
             hardware_interface::return_type::OK)
         {
+            // ✅ Auto torque off après timeout d'inactivité
+            if (auto_torque_off) {
+                double elapsed = (node->get_clock()->now() - last_cmd_time).seconds();
+                if (elapsed > torque_off_timeout) {
+                    for (auto & s : hardware->getServos()) {
+                        if (s.torque_enabled) {
+                            hardware->getWorkbench().torqueOff(s.id);
+                            s.torque_enabled = false;
+                            RCLCPP_WARN(node->get_logger(),
+                                "Auto torque OFF : %s (inactif depuis %.0fs)",
+                                s.name.c_str(), elapsed);
+                        }
+                    }
+                }
+            }
+
             for (const auto & s : hardware->getServos()) {
                 RCLCPP_INFO(node->get_logger(),
                     "Motor %s (ID %d): pos=%.3f rad  temp=%.0f°C  torque=%s",
