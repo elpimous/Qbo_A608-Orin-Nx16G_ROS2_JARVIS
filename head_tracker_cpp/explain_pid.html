@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PID Tuning — Néo Head Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fafaf8;
+    --bg2: #f0efeb;
+    --bg3: #e8e6e0;
+    --text: #1a1a18;
+    --text2: #5c5b56;
+    --text3: #8a8983;
+    --accent: #2563eb;
+    --accent-bg: #eff5ff;
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --amber: #d97706;
+    --amber-bg: #fffbeb;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --pink: #db2777;
+    --teal: #0d9488;
+    --teal-bg: #f0fdfa;
+    --border: rgba(0,0,0,0.08);
+    --border2: rgba(0,0,0,0.15);
+    --code-bg: #f5f4f0;
+    --font-body: 'DM Sans', system-ui, sans-serif;
+    --font-serif: 'Source Serif 4', Georgia, serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --radius: 10px;
+    --max-w: 780px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413;
+      --bg2: #1e1e1c;
+      --bg3: #2a2a27;
+      --text: #e8e6e0;
+      --text2: #a3a29c;
+      --text3: #6e6d68;
+      --border: rgba(255,255,255,0.08);
+      --border2: rgba(255,255,255,0.15);
+      --code-bg: #1e1e1c;
+      --accent: #60a5fa;
+      --accent-bg: #172340;
+      --green: #4ade80;
+      --green-bg: #14261a;
+      --amber: #fbbf24;
+      --amber-bg: #261f0f;
+      --red: #f87171;
+      --red-bg: #2a1414;
+      --pink: #f472b6;
+      --teal: #2dd4bf;
+      --teal-bg: #0f2624;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.75;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Layout ── */
+  .wrap { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
+  header {
+    padding: 60px 0 40px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 48px;
+  }
+  header h1 {
+    font-family: var(--font-serif);
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+  }
+  header p { color: var(--text2); font-size: 15px; }
+
+  /* ── Sections ── */
+  section { margin-bottom: 56px; }
+  h2 {
+    font-family: var(--font-serif);
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    letter-spacing: -0.3px;
+  }
+  h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 28px 0 10px;
+  }
+  p { margin-bottom: 14px; color: var(--text); }
+  p.muted { color: var(--text2); }
+
+  /* ── TOC ── */
+  nav.toc {
+    background: var(--bg2);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 48px;
+  }
+  nav.toc .title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text3); margin-bottom: 10px; }
+  nav.toc ol { padding-left: 20px; }
+  nav.toc li { margin-bottom: 4px; }
+  nav.toc a { color: var(--accent); text-decoration: none; font-size: 14px; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  /* ── Cards PID ── */
+  .pid-cards { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 20px 0; }
+  .pid-card {
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    border-left: 4px solid;
+  }
+  .pid-card h3 { margin: 0 0 8px; font-size: 15px; }
+  .pid-card p { margin-bottom: 6px; font-size: 14px; }
+  .pid-card .formula {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 8px 0;
+    display: inline-block;
+  }
+  .card-p { background: var(--accent-bg); border-color: var(--accent); }
+  .card-p h3 { color: var(--accent); }
+  .card-p .formula { background: rgba(37,99,235,0.08); color: var(--accent); }
+  .card-i { background: var(--amber-bg); border-color: var(--amber); }
+  .card-i h3 { color: var(--amber); }
+  .card-i .formula { background: rgba(217,119,6,0.08); color: var(--amber); }
+  .card-d { background: var(--teal-bg); border-color: var(--teal); }
+  .card-d h3 { color: var(--teal); }
+  .card-d .formula { background: rgba(13,148,136,0.08); color: var(--teal); }
+
+  /* ── Symptom table ── */
+  .symptom-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  .symptom-table th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--bg2);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text3);
+    border-bottom: 1px solid var(--border2);
+  }
+  .symptom-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .symptom-table tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+  }
+  .badge-up { background: var(--red-bg); color: var(--red); }
+  .badge-down { background: var(--green-bg); color: var(--green); }
+
+  /* ── Code blocks ── */
+  pre {
+    background: var(--code-bg);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 14px 0;
+    border: 1px solid var(--border);
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  p code, li code, td code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  /* ── Callout ── */
+  .callout {
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin: 20px 0;
+    font-size: 14px;
+  }
+  .callout-warn { background: var(--amber-bg); border-left: 3px solid var(--amber); }
+  .callout-info { background: var(--accent-bg); border-left: 3px solid var(--accent); }
+  .callout-ok { background: var(--green-bg); border-left: 3px solid var(--green); }
+  .callout strong { font-weight: 600; }
+
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 24px 0;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .flow-box {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    min-width: 100px;
+  }
+  .flow-arrow {
+    font-size: 18px;
+    color: var(--text3);
+    padding: 0 6px;
+  }
+  .fb-input { background: var(--bg2); border: 1px solid var(--border2); color: var(--text2); }
+  .fb-p { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(37,99,235,0.2); }
+  .fb-i { background: var(--amber-bg); color: var(--amber); border: 1px solid rgba(217,119,6,0.2); }
+  .fb-d { background: var(--teal-bg); color: var(--teal); border: 1px solid rgba(13,148,136,0.2); }
+  .fb-out { background: var(--green-bg); color: var(--green); border: 1px solid rgba(22,163,74,0.2); }
+
+  /* ── Simulator ── */
+  .sim-panel {
+    background: var(--bg2);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin: 24px 0;
+    border: 1px solid var(--border);
+  }
+  .sim-panel h3 { margin: 0 0 16px; }
+  .presets { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .presets button {
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border2);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .presets button:hover { background: var(--bg3); border-color: var(--text3); }
+  .presets button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .ctrl-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+  .ctrl-row label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    min-width: 120px;
+  }
+  .ctrl-row input[type=range] {
+    flex: 1;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg3);
+    border-radius: 3px;
+    outline: none;
+  }
+  .ctrl-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid var(--bg);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .ctrl-row .val-display {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    min-width: 45px;
+    text-align: right;
+    color: var(--text);
+  }
+
+  canvas#sim-canvas {
+    width: 100%;
+    border-radius: 8px;
+    margin: 16px 0 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .legend-row { display: flex; gap: 16px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); }
+  .legend-dot { width: 14px; height: 3px; border-radius: 2px; }
+
+  .metrics-bar {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .metric-box {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 10px 16px;
+    flex: 1;
+    min-width: 140px;
+    border: 1px solid var(--border);
+  }
+  .metric-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text3); }
+  .metric-val { font-family: var(--font-mono); font-size: 20px; font-weight: 500; margin-top: 2px; }
+  .verdict-bar {
+    margin-top: 12px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* ── Steps ── */
+  .steps { counter-reset: step; margin: 20px 0; }
+  .step {
+    counter-increment: step;
+    padding: 16px 20px 16px 56px;
+    position: relative;
+    margin-bottom: 12px;
+    background: var(--bg2);
+    border-radius: var(--radius);
+  }
+  .step::before {
+    content: counter(step);
+    position: absolute;
+    left: 18px;
+    top: 16px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .step p { margin: 0; font-size: 14px; }
+  .step strong { font-weight: 600; }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 0;
+    margin-top: 48px;
+    color: var(--text3);
+    font-size: 13px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    header h1 { font-size: 24px; }
+    .pid-cards { grid-template-columns: 1fr; }
+    .flow { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); }
+    .ctrl-row label { min-width: 80px; font-size: 12px; }
+  }
+
+  /* ── Lists ── */
+  ul, ol { padding-left: 20px; margin-bottom: 14px; }
+  li { margin-bottom: 4px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <h1>Guide PID — Néo Head Tracker</h1>
+  <p>Comprendre et tuner le PID du suivi de tête pour éliminer les oscillations</p>
+</header>
+
+<nav class="toc">
+  <div class="title">Sommaire</div>
+  <ol>
+    <li><a href="#principe">Principe du PID dans le head tracker</a></li>
+    <li><a href="#composantes">Les 3 composantes en détail</a></li>
+    <li><a href="#flux">Flux de données dans le code</a></li>
+    <li><a href="#simulateur">Simulateur interactif</a></li>
+    <li><a href="#diagnostic">Diagnostic des symptômes</a></li>
+    <li><a href="#recette">Recette de tuning pas à pas</a></li>
+    <li><a href="#commandes">Commandes ROS2 en live</a></li>
+    <li><a href="#valeurs">Valeurs recommandées</a></li>
+  </ol>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="principe">
+  <h2>1. Principe du PID dans le head tracker</h2>
+  <p>
+    Le PID (Proportionnel, Intégral, Dérivé) est un contrôleur en boucle fermée.
+    Dans le <code>head_tracker_node</code>, il prend en entrée l'<strong>erreur angulaire</strong>
+    (écart en radians entre le centre de l'image et la cible détectée) et produit
+    une <strong>correction de position</strong> envoyée au servo Dynamixel via <code>/cmd_joints</code>.
+  </p>
+  <p>
+    La <strong>vitesse</strong> du servo est calculée séparément, proportionnelle à l'amplitude
+    de l'erreur : grosse erreur → mouvement rapide, petite erreur → mouvement lent et précis.
+    Un filtre passe-bas lisse le tout pour éviter les saccades.
+  </p>
+
+  <div class="callout callout-info">
+    <strong>Boucle complète :</strong> caméra → détection (ROI) → erreur pixel → conversion rad → PID → correction position →
+    filtre passe-bas → seuil commande → <code>/cmd_joints</code> → servo Dynamixel → mouvement tête → caméra (retour boucle)
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="composantes">
+  <h2>2. Les 3 composantes en détail</h2>
+
+  <div class="pid-cards">
+    <div class="pid-card card-p">
+      <h3>P — Proportionnel (force de rappel)</h3>
+      <div class="formula">correction_P = Kp × erreur</div>
+      <p>
+        Plus la cible est loin du centre image, plus la correction est forte.
+        C'est la composante principale — sans elle, rien ne bouge.
+      </p>
+      <p>
+        <strong>Trop haut :</strong> la tête dépasse la cible (overshoot) et oscille autour.<br>
+        <strong>Trop bas :</strong> la tête met trop longtemps à rejoindre la cible, ou n'y arrive pas.
+      </p>
+    </div>
+
+    <div class="pid-card card-i">
+      <h3>I — Intégral (correction de biais)</h3>
+      <div class="formula">correction_I = Ki × ∑(erreur × dt)</div>
+      <p>
+        Accumule l'erreur dans le temps. Si la tête reste décalée de 2 pixels pendant
+        100 frames, l'intégrale grossit et pousse la correction jusqu'à annuler ce biais.
+      </p>
+      <p>
+        <strong>Trop haut :</strong> l'accumulation dépasse la cible → oscillations lentes (la tête "dérive").<br>
+        <strong>Trop bas / zéro :</strong> un petit décalage permanent peut rester (erreur statique).
+      </p>
+      <p>
+        L'anti-windup (<code>max_integral = 1.0</code>) empêche l'intégrale d'exploser
+        quand la cible disparaît longtemps.
+      </p>
+    </div>
+
+    <div class="pid-card card-d">
+      <h3>D — Dérivé (frein / amortisseur)</h3>
+      <div class="formula">correction_D = Kd × (erreur - erreur_précédente) / dt</div>
+      <p>
+        Regarde la <strong>vitesse de changement</strong> de l'erreur. Quand l'erreur diminue
+        (la tête approche de la cible), D produit une correction négative → il freine.
+      </p>
+      <p>
+        <strong>C'est le paramètre anti-oscillation.</strong> C'est celui qui te manquait.
+      </p>
+      <p>
+        <strong>Trop haut :</strong> la tête devient "visqueuse", lente, et amplifie le bruit du capteur.<br>
+        <strong>Trop bas :</strong> pas de freinage → la tête dépasse la cible à chaque correction.
+      </p>
+    </div>
+  </div>
+
+  <div class="callout callout-warn">
+    <strong>Le ratio clé : Kd / Kp</strong><br>
+    Avec tes anciennes valeurs (Kp=1.0, Kd=0.02), le ratio est 0.02 — quasi pas d'amortissement.<br>
+    Valeur recommandée : ratio entre 0.08 et 0.15 → suffisamment de freinage pour éliminer l'overshoot.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="flux">
+  <h2>3. Flux de données dans le code</h2>
+
+  <div class="flow">
+    <div class="flow-box fb-input">erreur pixel<br><small>cx - image_w/2</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box fb-input">erreur rad<br><small>atan2(err, fx)</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box fb-p">P × err</div>
+    <div class="flow-arrow">+</div>
+    <div class="flow-box fb-i">I × ∑err</div>
+    <div class="flow-arrow">+</div>
+    <div class="flow-box fb-d">D × Δerr/dt</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box fb-out">correction rad</div>
+  </div>
+
+  <div class="flow">
+    <div class="flow-box fb-out">position cible<br><small>current + correction</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box fb-input">filtre passe-bas<br><small>alpha = 0.20</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box fb-input">seuil Δ > 0.005<br><small>anti-spam</small></div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box fb-out">/cmd_joints<br><small>pos + vel</small></div>
+  </div>
+
+  <h3>Calcul de la vitesse (séparé du PID)</h3>
+  <p>
+    La vitesse envoyée au servo est indépendante du PID. Elle est proportionnelle à l'erreur :
+  </p>
+  <pre><code>vel = clamp(|erreur_rad| × vel_gain, min_vel, max_vel)</code></pre>
+  <p>
+    Avec <code>vel_gain = 4.0</code>, une erreur de 0.3 rad donne 1.2 rad/s.
+    Le servo arrive vite quand la cible est loin, lentement quand elle est proche.
+    Cette vitesse est ensuite lissée par le même filtre passe-bas que la position.
+  </p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="simulateur">
+  <h2>4. Simulateur interactif</h2>
+  <p>
+    Le graphe simule la réponse du servo à des sauts de position cible (pointillés gris).
+    Ajuste les sliders pour voir l'effet de chaque paramètre en temps réel.
+  </p>
+
+  <div class="sim-panel">
+    <div class="presets">
+      <button onclick="setPreset(1.0,0.05,0.02,0.25,'btn0')" id="btn0">Tes valeurs (oscillation)</button>
+      <button onclick="setPreset(0.6,0.02,0.08,0.20,'btn1')" id="btn1" class="active">Recommandé</button>
+      <button onclick="setPreset(1.5,0.0,0.0,0.25,'btn2')" id="btn2">P seul</button>
+      <button onclick="setPreset(0.6,0.0,0.0,0.25,'btn3')" id="btn3">P faible seul</button>
+      <button onclick="setPreset(0.6,0.0,0.15,0.20,'btn4')" id="btn4">P + D fort</button>
+      <button onclick="setPreset(0.6,0.3,0.0,0.25,'btn5')" id="btn5">P + I fort (dérive)</button>
+    </div>
+
+    <div class="ctrl-row">
+      <label style="color:var(--accent)">Kp (proportionnel)</label>
+      <input type="range" id="kp" min="0" max="2.0" step="0.05" value="0.6" oninput="update()">
+      <span class="val-display" id="kp-v">0.60</span>
+    </div>
+    <div class="ctrl-row">
+      <label style="color:var(--amber)">Ki (intégral)</label>
+      <input type="range" id="ki" min="0" max="0.5" step="0.01" value="0.02" oninput="update()">
+      <span class="val-display" id="ki-v">0.02</span>
+    </div>
+    <div class="ctrl-row">
+      <label style="color:var(--teal)">Kd (dérivé)</label>
+      <input type="range" id="kd" min="0" max="0.30" step="0.005" value="0.08" oninput="update()">
+      <span class="val-display" id="kd-v">0.080</span>
+    </div>
+    <div class="ctrl-row">
+      <label>Lissage (alpha)</label>
+      <input type="range" id="alpha" min="0.05" max="1.0" step="0.05" value="0.20" oninput="update()">
+      <span class="val-display" id="alpha-v">0.20</span>
+    </div>
+
+    <canvas id="sim-canvas" height="300"></canvas>
+
+    <div class="legend-row">
+      <div class="legend-item"><div class="legend-dot" style="background:#888"></div>Cible</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Position servo</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Contrib. P</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Contrib. I</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--pink)"></div>Contrib. D</div>
+    </div>
+
+    <div class="metrics-bar">
+      <div class="metric-box">
+        <div class="metric-label">Overshoot</div>
+        <div class="metric-val" id="m-overshoot">—</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Convergence</div>
+        <div class="metric-val" id="m-settle">—</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">Ratio Kd/Kp</div>
+        <div class="metric-val" id="m-ratio">—</div>
+      </div>
+    </div>
+    <div class="verdict-bar" id="verdict"></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="diagnostic">
+  <h2>5. Diagnostic des symptômes</h2>
+
+  <table class="symptom-table">
+    <thead>
+      <tr>
+        <th>Symptôme observé</th>
+        <th>Cause probable</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>La tête oscille autour de la cible</td>
+        <td>Kp trop haut et/ou Kd trop bas</td>
+        <td><span class="badge badge-down">↓ Kp</span> <span class="badge badge-up">↑ Kd</span></td>
+      </tr>
+      <tr>
+        <td>Oscillation lente (la tête "dérive")</td>
+        <td>Ki trop haut → accumulation excessive</td>
+        <td><span class="badge badge-down">↓ Ki</span> ou mettre à 0</td>
+      </tr>
+      <tr>
+        <td>La tête met trop longtemps à suivre</td>
+        <td>Kp trop bas ou vel_gain trop bas</td>
+        <td><span class="badge badge-up">↑ Kp</span> <span class="badge badge-up">↑ vel_gain</span></td>
+      </tr>
+      <tr>
+        <td>Saccades rapides / vibrations</td>
+        <td>Lissage insuffisant ou seuil trop bas</td>
+        <td><span class="badge badge-down">↓ alpha</span> <span class="badge badge-up">↑ deadzone</span></td>
+      </tr>
+      <tr>
+        <td>Petit décalage permanent</td>
+        <td>Pas assez de Ki (erreur statique)</td>
+        <td><span class="badge badge-up">↑ Ki</span> (léger, 0.01-0.03)</td>
+      </tr>
+      <tr>
+        <td>La tête est "molle" / visqueuse</td>
+        <td>Kd trop haut → trop de freinage</td>
+        <td><span class="badge badge-down">↓ Kd</span></td>
+      </tr>
+      <tr>
+        <td>Mouvement lent mais sans oscillation</td>
+        <td>vel_gain ou max_vel trop bas</td>
+        <td><span class="badge badge-up">↑ vel_gain</span> <span class="badge badge-up">↑ max_vel</span></td>
+      </tr>
+      <tr>
+        <td>Mouvement OK mais bruit quand c'est centré</td>
+        <td>Deadzone trop petite</td>
+        <td><span class="badge badge-up">↑ deadzone_px</span> (10-15)</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="recette">
+  <h2>6. Recette de tuning pas à pas</h2>
+
+  <div class="steps">
+    <div class="step">
+      <p><strong>Ki = 0, Kd = 0.</strong> On isole le proportionnel. Monte Kp progressivement
+        (0.3 → 0.5 → 0.8 → 1.0) jusqu'à ce que la tête suive la cible mais commence à osciller.
+        Note cette valeur — c'est le Kp critique. Prends <strong>60-70%</strong> de cette valeur.</p>
+    </div>
+    <div class="step">
+      <p><strong>Monte Kd</strong> depuis 0 par pas de 0.01 (0.02 → 0.04 → 0.06 → 0.08).
+        L'oscillation doit disparaître. Arrête quand la tête se stabilise sans devenir
+        trop lente. Vise un ratio <strong>Kd/Kp entre 0.08 et 0.15</strong>.</p>
+    </div>
+    <div class="step">
+      <p><strong>Ajoute Ki</strong> uniquement si tu vois un décalage permanent (la tête s'arrête
+        un peu à côté de la cible). Commence à 0.01, monte par pas de 0.005.
+        En général <strong>0.01 à 0.03</strong> suffit. Si ça re-oscille, baisse.</p>
+    </div>
+    <div class="step">
+      <p><strong>Ajuste vel_gain</strong> si le mouvement est bon mais trop lent globalement.
+        Monte de 4.0 vers 6.0 ou 8.0. C'est indépendant du PID — ça contrôle juste
+        le Moving_Speed envoyé au servo.</p>
+    </div>
+    <div class="step">
+      <p><strong>Ajuste smoothing_alpha</strong> si les transitions sont trop brusques (monte vers 0.15)
+        ou trop molles (monte vers 0.35). Et <strong>deadzone_px</strong> si la tête tremble
+        quand la cible est centrée (10-15 px).</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="commandes">
+  <h2>7. Commandes ROS2 en live</h2>
+  <p>Tout se modifie à chaud sans relancer le node :</p>
+
+<pre><code># PID
+ros2 param set /head_tracker_node pid_pan_kp 0.6
+ros2 param set /head_tracker_node pid_pan_ki 0.02
+ros2 param set /head_tracker_node pid_pan_kd 0.08
+
+# Idem pour tilt
+ros2 param set /head_tracker_node pid_tilt_kp 0.6
+ros2 param set /head_tracker_node pid_tilt_ki 0.02
+ros2 param set /head_tracker_node pid_tilt_kd 0.08
+
+# Vitesse
+ros2 param set /head_tracker_node vel_gain 4.0
+ros2 param set /head_tracker_node min_vel 0.3
+
+# Lissage
+ros2 param set /head_tracker_node smoothing_alpha 0.20
+ros2 param set /head_tracker_node deadzone_px 12.0
+
+# Vérifier les valeurs courantes
+ros2 param dump /head_tracker_node</code></pre>
+
+  <div class="callout callout-ok">
+    <strong>Astuce :</strong> ouvre un terminal avec le log du head_tracker (<code>ros2 topic echo /cmd_joints</code>)
+    pendant que tu modifies les params dans un second terminal. Tu verras les commandes changer en temps réel.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section id="valeurs">
+  <h2>8. Valeurs recommandées</h2>
+
+<pre><code># head_tracker_params.yaml — valeurs anti-oscillation
+head_tracker_node:
+  ros__parameters:
+    pid_pan_kp:  0.6
+    pid_pan_ki:  0.02
+    pid_pan_kd:  0.08
+
+    pid_tilt_kp: 0.6
+    pid_tilt_ki: 0.02
+    pid_tilt_kd: 0.08
+
+    vel_gain: 4.0
+    min_vel:  0.3
+    max_pan_vel:  5.0
+    max_tilt_vel: 3.0
+
+    smoothing_alpha: 0.20
+    cmd_threshold_rad: 0.005
+    deadzone_px: 12.0</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Pan et tilt séparés :</strong> en pratique le tilt (vertical) a souvent besoin de gains
+    légèrement différents car la charge mécanique n'est pas la même. Si le pan est bon
+    mais le tilt oscille encore, baisse <code>pid_tilt_kp</code> à 0.5 et monte
+    <code>pid_tilt_kd</code> à 0.10.
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Néo Head Tracker — PID Tuning Guide
+  </div>
+</footer>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- SIMULATOR SCRIPT -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<script>
+const cv = document.getElementById('sim-canvas');
+const cx = cv.getContext('2d');
+const DPR = window.devicePixelRatio || 1;
+
+function resize() {
+  cv.width = cv.offsetWidth * DPR;
+  cv.height = 300 * DPR;
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resize();
+window.addEventListener('resize', () => { resize(); update(); });
+
+function getVal(id) { return parseFloat(document.getElementById(id).value); }
+
+function setPreset(kp, ki, kd, alpha, btnId) {
+  document.getElementById('kp').value = kp;
+  document.getElementById('ki').value = ki;
+  document.getElementById('kd').value = kd;
+  document.getElementById('alpha').value = alpha;
+  document.querySelectorAll('.presets button').forEach(b => b.classList.remove('active'));
+  if (btnId) document.getElementById(btnId).classList.add('active');
+  update();
+}
+
+function simulate(kp, ki, kd, alpha) {
+  const dt = 1/30, steps = 200;
+  const out = { target:[], pos:[], pC:[], iC:[], dC:[] };
+  let position = 0, integral = 0, prevError = 0, smoothed = 0, smoothInit = false;
+
+  for (let i = 0; i < steps; i++) {
+    let t = 0;
+    if (i >= 15 && i < 100) t = 0.3;
+    else if (i >= 100 && i < 140) t = -0.15;
+    else if (i >= 140) t = 0.1;
+    out.target.push(t);
+
+    const error = t - position;
+    integral += error * dt;
+    integral = Math.max(-1, Math.min(1, integral));
+    const deriv = (error - prevError) / dt;
+    prevError = error;
+
+    const pT = kp * error, iT = ki * integral, dT = kd * deriv;
+    const correction = pT + iT + dT;
+
+    if (!smoothInit) { smoothed = position + correction; smoothInit = true; }
+    else { smoothed += alpha * ((position + correction) - smoothed); }
+    position = smoothed;
+
+    out.pos.push(position);
+    out.pC.push(pT);
+    out.iC.push(iT);
+    out.dC.push(dT);
+  }
+  return out;
+}
+
+function draw(data) {
+  const W = cv.offsetWidth, H = 300;
+  const pad = { t: 24, b: 32, l: 44, r: 14 };
+  const gW = W - pad.l - pad.r, gH = H - pad.t - pad.b;
+  cx.clearRect(0, 0, W, H);
+
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const gridC = dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+  const textC = dark ? '#777' : '#999';
+  const zeroC = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
+  const blue = dark ? '#60a5fa' : '#2563eb';
+  const green = dark ? '#4ade80' : '#16a34a';
+  const amber = dark ? '#fbbf24' : '#d97706';
+  const pink = dark ? '#f472b6' : '#db2777';
+
+  const yMin = -0.4, yMax = 0.55;
+  const toX = i => pad.l + (i / (data.pos.length - 1)) * gW;
+  const toY = v => pad.t + (1 - (v - yMin) / (yMax - yMin)) * gH;
+
+  // Grid
+  cx.textAlign = 'right'; cx.font = '11px sans-serif';
+  for (let v = -0.3; v <= 0.5; v += 0.1) {
+    const y = toY(v);
+    cx.strokeStyle = gridC; cx.lineWidth = 0.5;
+    cx.beginPath(); cx.moveTo(pad.l, y); cx.lineTo(W - pad.r, y); cx.stroke();
+    cx.fillStyle = textC; cx.fillText(v.toFixed(1), pad.l - 6, y + 4);
+  }
+  // Zero line
+  cx.strokeStyle = zeroC; cx.lineWidth = 1;
+  cx.beginPath(); cx.moveTo(pad.l, toY(0)); cx.lineTo(W - pad.r, toY(0)); cx.stroke();
+
+  // Event markers
+  cx.fillStyle = textC; cx.font = '10px sans-serif'; cx.textAlign = 'left';
+  [{ i:15, t:'saut 0→0.3' }, { i:100, t:'0.3→-0.15' }, { i:140, t:'-0.15→0.1' }].forEach(m => {
+    cx.fillText(m.t, toX(m.i) + 2, pad.t - 6);
+    cx.strokeStyle = gridC; cx.lineWidth = 0.5; cx.setLineDash([3,3]);
+    cx.beginPath(); cx.moveTo(toX(m.i), pad.t); cx.lineTo(toX(m.i), H - pad.b); cx.stroke();
+    cx.setLineDash([]);
+  });
+
+  function drawLine(arr, color, width, dash) {
+    cx.strokeStyle = color; cx.lineWidth = width; cx.setLineDash(dash || []);
+    cx.beginPath();
+    arr.forEach((v, i) => { i === 0 ? cx.moveTo(toX(i), toY(v)) : cx.lineTo(toX(i), toY(v)); });
+    cx.stroke(); cx.setLineDash([]);
+  }
+
+  drawLine(data.target, '#888', 1.5, [5, 4]);
+  drawLine(data.pC, green, 1);
+  drawLine(data.iC, amber, 1);
+  drawLine(data.dC, pink, 1);
+  drawLine(data.pos, blue, 2.5);
+
+  // Axes labels
+  cx.fillStyle = textC; cx.font = '11px sans-serif'; cx.textAlign = 'center';
+  cx.fillText('Frames (30 Hz)', W / 2, H - 6);
+  cx.save(); cx.translate(12, H / 2); cx.rotate(-Math.PI / 2);
+  cx.fillText('Radians', 0, 0); cx.restore();
+}
+
+function update() {
+  const kp = getVal('kp'), ki = getVal('ki'), kd = getVal('kd'), alpha = getVal('alpha');
+  document.getElementById('kp-v').textContent = kp.toFixed(2);
+  document.getElementById('ki-v').textContent = ki.toFixed(2);
+  document.getElementById('kd-v').textContent = kd.toFixed(3);
+  document.getElementById('alpha-v').textContent = alpha.toFixed(2);
+
+  // Clear active preset
+  document.querySelectorAll('.presets button').forEach(b => b.classList.remove('active'));
+
+  const data = simulate(kp, ki, kd, alpha);
+  draw(data);
+
+  // Metrics
+  let overshoot = 0, settleFrame = 0;
+  for (let i = 15; i < 100; i++) {
+    if (data.pos[i] > 0.3) overshoot = Math.max(overshoot, data.pos[i] - 0.3);
+    if (Math.abs(data.pos[i] - 0.3) > 0.005) settleFrame = i - 15;
+  }
+  const osPct = (overshoot / 0.3 * 100);
+  const settleMs = Math.round(settleFrame * 33.3);
+  const ratio = kp > 0 ? (kd / kp) : 0;
+
+  document.getElementById('m-overshoot').textContent = osPct.toFixed(0) + '%';
+  document.getElementById('m-settle').textContent = settleMs + ' ms';
+  document.getElementById('m-ratio').textContent = ratio.toFixed(3);
+
+  const v = document.getElementById('verdict');
+  if (osPct > 20) {
+    v.textContent = '⚠ Overshoot fort — monte Kd ou baisse Kp';
+    v.style.background = 'var(--red-bg)'; v.style.color = 'var(--red)';
+  } else if (osPct > 8) {
+    v.textContent = '⚡ Overshoot modéré — un peu plus de Kd devrait suffire';
+    v.style.background = 'var(--amber-bg)'; v.style.color = 'var(--amber)';
+  } else if (settleMs > 800) {
+    v.textContent = '🐢 Convergence lente — monte Kp ou vel_gain';
+    v.style.background = 'var(--amber-bg)'; v.style.color = 'var(--amber)';
+  } else {
+    v.textContent = '✓ Bon compromis réactivité / stabilité';
+    v.style.background = 'var(--green-bg)'; v.style.color = 'var(--green)';
+  }
+}
+
+update();
+</script>
+
+</body>
+</html>

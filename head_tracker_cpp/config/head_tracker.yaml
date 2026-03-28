@@ -1,0 +1,59 @@
+# head_tracker_params.yaml
+head_tracker_node:
+  ros__parameters:
+    # ── Image (écrasé par /camera_info si disponible) ──
+    image_width:  640
+    image_height: 480
+
+    # ── Noms des joints ──
+    pan_joint_name:  "head_pan_joint"
+    tilt_joint_name: "head_tilt_joint"
+
+    # ── PID position (correction en radians) ──
+    pid_pan_kp:  1.4
+    pid_pan_ki:  0.01
+    pid_pan_kd:  0.06
+    pid_tilt_kp: 0.5
+    pid_tilt_ki: 0.01
+    pid_tilt_kd: 0.12
+
+    # ── Vitesse proportionnelle à l'erreur ──
+    vel_gain: 10.0       # rad/s par rad d'erreur
+    min_vel:  0.05       # plancher vitesse
+    max_pan_vel:  5.0
+    max_tilt_vel: 5.0
+
+    # ── Lissage ──
+    #    Filtre passe-bas exponentiel sur position ET vitesse
+    #    0.1 = très lisse (lent à réagir)
+    #    0.3 = bon compromis
+    #    0.5 = réactif mais un peu moins lisse
+    #    1.0 = pas de lissage (brut)
+    smoothing_alpha: 0.3
+
+    # ── Seuil de commande ──
+    #    N'envoie une commande que si le delta position > seuil
+    #    Évite de spammer le servo avec des micro-corrections
+    cmd_threshold_rad: 0.05
+
+    # ── Limites angulaires (rad) ──
+    min_pan_angle:  -1.22
+    max_pan_angle:   1.22
+    min_tilt_angle: -0.50
+    max_tilt_angle:  0.70
+
+    # ── Deadzone (pixels) ──
+    deadzone_px: 10.0
+
+    # ── Perte de cible ──
+    loss_timeout: 2.0
+    update_rate_hz: 30.0
+
+    # ── Mode recherche ──
+    search_pan_vel:    0.3
+    search_tilt_vel:   0.2
+    search_min_pan:    -0.5
+    search_max_pan:     0.5
+    search_min_tilt:   -0.3
+    search_max_tilt:    0.4
+    search_interval_s:  2.0    # secondes entre chaque position random
