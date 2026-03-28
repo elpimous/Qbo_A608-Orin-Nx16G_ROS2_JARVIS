@@ -1,3 +1,4 @@
+![Bannière](img/image2.png)
 # Red Ball Tracker (ROS 2 C++ Node)
 
 **Auteur : Vincent Foucault**
