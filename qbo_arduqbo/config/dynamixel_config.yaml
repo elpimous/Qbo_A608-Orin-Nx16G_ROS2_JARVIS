@@ -6,8 +6,8 @@ dynamixel_hardware:
     dynamixel.baud_rate: 1000000
     dynamixel.protocol_version: 1.0
 
-    dynamixel_state_rate_hz: 1
-    dynamixel_joint_rate_hz: 50
+    dynamixel_state_rate_hz: 30.0
+    dynamixel_joint_rate_hz: 30.0
 
     # DIAGNOSTICS
     diagnostic_temp_warn: 60.0
@@ -42,4 +42,4 @@ dynamixel_hardware:
     dynamixel.motors.motor_2.ticks: 1024
     dynamixel.motors.motor_2.neutral: 465
     dynamixel.motors.motor_2.torque_limit: 800 # 800
-    dynamixel.motors.motor_2.max_speed: 3.0 # 3.0
+    dynamixel.motors.motor_2.max_speed: 4.0
