@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ball_tracking_cpp</name>
+  <version>0.0.1</version>
+  <description>Node de tracking de balle rouge en C++ avec Kalman filter</description>
+  <maintainer email="user@example.com">Your Name</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <!-- image_transport retiré pour simplifier et éviter shared_from_this -->
+
+  <!-- OpenCV utilisé via cv_bridge et directement -->
+  <exec_depend>opencv4</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
