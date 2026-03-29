@@ -5,7 +5,8 @@ Optimisé pour Jetson Orin NX avec sortie USB Audio Device.
 
 ## Fonctionnalités
 
-- Synthèse vocale française avec modèle Piper ONNX
+- Synthèse vocale française (entrainée sur données personnelles)avec modèle Piper ONNX
+- Il s'agit de la voix d' Axel (16 ans), mon fils.
 - Streaming audio temps réel (faible latence)
 - Resampling automatique (22050 Hz → 48000 Hz)
 - Mute/unmute automatique du microphone pendant la parole
@@ -23,18 +24,6 @@ pip install piper-tts sounddevice scipy numpy --break-system-packages
 
 # Dépendances système (ALSA)
 sudo apt install libasound2-dev portaudio19-dev
-```
-
-### Cloner et compiler
-
-```bash
-cd ~/qbo_ws/src
-# (si pas déjà cloné)
-git clone <repo_url> qbo_tts
-
-cd ~/qbo_ws
-colcon build --packages-select qbo_tts
-source install/setup.bash
 ```
 
 ### Modèle Piper
@@ -208,7 +197,7 @@ ros2 topic info /to_speak
 ros2 topic pub -1 /to_speak std_msgs/msg/String "{data: 'Test de synthèse vocale'}"
 ```
 
-### Test 4 : Test Piper standalone (sans ROS)
+### Test 4 : Test Piper standalone (sans ROS) pour DEBUG.
 
 ```bash
 python3 -c "
