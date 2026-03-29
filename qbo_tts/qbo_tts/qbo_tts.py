@@ -6,7 +6,8 @@ Corrections principales :
 - Resampling correct vers 48000 Hz (supporté par ta carte)
 - Gestion optimisée des buffers pour éviter les coupures
 - Streaming temps réel maintenu
-*** Vincent FOUCAULT - Août 2025 ***
+- Configuration via YAML (config/tts.yaml)
+*** Vincent FOUCAULT - Mars 2026 ***
 """
 
 import rclpy
@@ -20,12 +21,13 @@ import sounddevice as sd
 from scipy.signal import resample
 from piper import PiperVoice
 
+
 class PiperTTSStreamer:
     """
     Classe de streaming TTS utilisant Piper et sounddevice.
     Version corrigée avec resampling fonctionnel pour 48000 Hz.
     """
-    def __init__(self, model_path: str, config_path: str = None, device_index: int = 1):
+    def __init__(self, model_path: str, config_path: str = None, device_index: int = 0):
         self.device_index = device_index
         
         # Force 48000 Hz (mieux supporté que 44100 sur ta carte)
@@ -84,35 +86,25 @@ class PiperTTSStreamer:
     def _enqueue_audio(self, text: str) -> None:
         """
         Synthétise le texte et ajoute les chunks resampleés dans la file.
-        Streaming temps réel maintenu.
         """
         try:
-            # Utilisation du streaming de Piper
-            stream = self.voice.synthesize_stream_raw(text)
-            
-            for chunk in stream:
+            # vince : synthesize() retourne des AudioChunk avec audio_float_array
+            for chunk in self.voice.synthesize(text):
                 if chunk is None:
                     continue
-                    
-                # Conversion int16 -> float32 normalisé
-                if hasattr(chunk, 'numpy'):
-                    arr = chunk.numpy()
-                else:
-                    arr = np.frombuffer(chunk, dtype=np.int16)
                 
-                # Normalisation
-                data_float = arr.astype(np.float32) / 32768.0
+                # Utilise audio_float_array directement (déjà normalisé)
+                data_float = chunk.audio_float_array
                 
                 # Resampling vers le target sample rate
                 data_resampled = self._resample_chunk(data_float)
                 
                 if len(data_resampled) > 0:
                     self.audio_queue.put(data_resampled)
-                    
+                   
         except Exception as e:
             print(f"[TTS] Erreur synthèse: {e}")
         finally:
-            # Signal de fin de flux pour ce texte
             self.audio_queue.put(None)
 
     def _playback(self) -> None:
@@ -218,18 +210,23 @@ class TTSListenerNode(Node):
     """
     Nœud ROS2 pour streaming TTS sur robot Néo.
     Version optimisée avec resampling fonctionnel.
+    Configuration via config/tts.yaml
     """
     def __init__(self):
-        super().__init__('QBO_talker')
+        # vince : nom du node doit correspondre au YAML (qbo_tts_node)
+        super().__init__('qbo_tts_node')
         
-        # Paramètres ROS2
+        # Paramètres ROS2 (lus depuis config/tts.yaml)
         self.declare_parameter('model_path', '/home/nvidia/qbo_ws/src/qbo_tts/tts_model/axel.onnx')
         self.declare_parameter('config_path', '/home/nvidia/qbo_ws/src/qbo_tts/tts_model/axel.onnx.json')
-        self.declare_parameter('output_device_index', 1)
+        self.declare_parameter('output_device_index', 0)
 
         model = self.get_parameter('model_path').get_parameter_value().string_value
         config = self.get_parameter('config_path').get_parameter_value().string_value
         device_index = self.get_parameter('output_device_index').get_parameter_value().integer_value
+
+        self.get_logger().info(f"Config: model={model}")
+        self.get_logger().info(f"Config: device_index={device_index}")
 
         # Publisher pour contrôler l'audio du micro
         self.audio_control_publisher = self.create_publisher(

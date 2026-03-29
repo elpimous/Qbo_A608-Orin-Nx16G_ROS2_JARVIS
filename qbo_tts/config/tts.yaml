@@ -1,0 +1,25 @@
+# Configuration TTS pour robot Néo/QBo
+# Fichier: config/tts.yaml
+
+qbo_tts_node:
+  ros__parameters:
+    # ============================================
+    # Configuration carte son
+    # ============================================
+    # Pour trouver l'index de votre carte son :
+    #   python3 -c "import sounddevice as sd; print(sd.query_devices())"
+    #
+    # Exemple de sortie :
+    #   0 USB Audio Device: - (hw:0,0), ALSA (1 in, 2 out)  <-- index 0
+    #   1 sysdefault, ALSA (128 in, 128 out)
+    #   ...
+    output_device_index: 0
+
+    # ============================================
+    # Configuration modèle Piper TTS
+    # ============================================
+    # Chemin vers le modèle ONNX (voix française)
+    model_path: "/home/nvidia/qbo_ws/src/qbo_tts/tts_model/axel.onnx"
+    
+    # Chemin vers la config JSON du modèle
+    config_path: "/home/nvidia/qbo_ws/src/qbo_tts/tts_model/axel.onnx.json"

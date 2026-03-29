@@ -3,28 +3,15 @@
 <package format="3">
   <name>qbo_tts</name>
   <version>1.0.0</version>
-  <description>Text-to-Speech node for QBO robot named Néo</description>
-  <maintainer email="elpimous12@gmail.com">Vincent FOUCAULT</maintainer>
-  <license>Apache-2.0</license>
+  <description>ROS2 TTS Node using Piper for robot Neo/QBo</description>
+  <maintainer email="vincent@example.com">Vincent FOUCAULT</maintainer>
+  <license>MIT</license>
 
-  <!-- Build dependencies -->
-  <buildtool_depend>ament_python</buildtool_depend>
-
-  <!-- Runtime dependencies -->
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
-  <depend>launch</depend>
-  <depend>launch_ros</depend>
-  <depend>ament_index_python</depend>
 
-  <exec_depend>sounddevice</exec_depend>
-  <exec_depend>numpy</exec_depend>
-
-  <!-- Test dependencies -->
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
