@@ -1,0 +1,7 @@
+placer les 3 fichiers créés ici. trop lourd pour github
+
+decoder_joint.engine
+
+encoder.engine
+
+vocab.txt

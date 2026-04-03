@@ -1,0 +1,25 @@
+stt_node:
+  ros__parameters:
+
+    # ── Engines TensorRT (dans /engine_model/) ────────────────────────────────
+    encoder_engine:  "/home/nvidia/qbo_ws/src/qbo_stt/models/engine/encoder.engine"
+    decoder_engine:  "/home/nvidia/qbo_ws/src/qbo_stt/models/engine/decoder_joint.engine"
+    vocab_file:      "/home/nvidia/qbo_ws/src/qbo_stt/models/engine/vocab.txt"
+
+    # ── VAD ───────────────────────────────────────────────────────────────────
+    vad_model:      "~/qbo_ws/src/qbo_stt/models/silero_vad.onnx"
+
+    # Seuil Silero TRT (si engine présent) : 0.0 → 1.0
+    vad_threshold:     0.5
+    # Durée silence pour clore un segment (ms)
+    vad_min_silence_ms: 600
+    vad_min_speech_ms:  100   # était 200 → capture "oui", "non"
+    vad_pre_buffer_ms:  300   # plus de contexte avant le m
+    # Durée max d'un segment (s)
+    vad_max_speech_s:   10.0
+
+    # ── Audio ─────────────────────────────────────────────────────────────────
+    # Device micro PyAudio (-1 = défaut système)
+    audio_device_index: 0
+    # Taille chunk VAD : 512 frames = 32ms à 16kHz # contrainte de silero
+    chunk_size: 512
