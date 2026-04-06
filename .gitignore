@@ -13,4 +13,3 @@ realsense-ros/
 # Ignorer les fichiers Python compilés
 __pycache__/
 *.pyc
-
